@@ -11,6 +11,8 @@ AUTHORS:
 
 - Peter Bruin (2021): do not require the base ring to be a field
 
+- Eloi Torrents (2024): construct quaternion algebras over number fields from ramification
+
 This code is partly based on Sage code by David Kohel from 2005.
 
 TESTS:
@@ -78,6 +80,8 @@ from sage.misc.cachefunc import cached_method
 
 from sage.categories.algebras import Algebras
 
+from sage.libs.pari.all import pari
+
 ########################################################
 # Constructor
 ########################################################
@@ -89,7 +93,7 @@ class QuaternionAlgebraFactory(UniqueFactory):
 
     INPUT:
 
-    There are three input formats:
+    There are four input formats:
 
     - ``QuaternionAlgebra(a, b)``, where `a` and `b` can be coerced to
       units in a common field `K` of characteristic different from 2.
@@ -101,6 +105,12 @@ class QuaternionAlgebraFactory(UniqueFactory):
       integer.  This constructs a quaternion algebra of discriminant
       `D` over `K = \QQ`.  Suitable nonzero rational numbers `a`, `b`
       as above are deduced from `D`.
+
+    - ``QuaternionAlgebra(K, L_finite, L_archimedean)``, where `L_finite`
+      is a list of prime ideals and `L_archimedean` is a list local 
+      invariants (0 or 1/2) specifying the ramification at the real places.
+      This constructs a quaternion algebra ramified exacly at the 
+      specified places.
 
     OUTPUT:
 
@@ -178,6 +188,21 @@ class QuaternionAlgebraFactory(UniqueFactory):
         sage: QuaternionAlgebra(2*3*5*7)
         Quaternion Algebra (-22, 210) with base ring Rational Field
 
+    ``QuaternionAlgebra(K, L_finite, L_archimedean)`` -- return the quaternion
+    algebra over K with the specified ramification::
+        sage: K.<w> = NumberField(x^2-x-1)
+        sage: P = K.prime_above(2)
+        sage: Q = K.prime_above(3)
+        sage: A = QuaternionAlgebra(K, [P,Q], [0,0])
+        sage: A.discriminant()
+        Fractional ideal (6)
+        sage: A = QuaternionAlgebra(K, [P,Q], [1/2,0])
+        Traceback (most recent call last):
+        ...
+        PariError: domain error in checkhasse: sum(Hasse invariants) != 0
+        sage: QuaternionAlgebra(QQ.number_field(), [ZZ.ideal(2),ZZ.ideal(3)], [0])
+        Quaternion Algebra (-1, 3) with base ring Rational Field
+    
     If the coefficients `a` and `b` in the definition of the quaternion
     algebra are not integral, then a slower generic type is used for
     arithmetic::
@@ -257,11 +282,29 @@ class QuaternionAlgebraFactory(UniqueFactory):
             a = K(v[0])
             b = K(v[1])
 
-        # QuaternionAlgebra(K, a, b)
         else:
+            # QuaternionAlgebra(K, finite_places, archimedian_places)
             K = arg0
-            a = K(arg1)
-            b = K(arg2)
+            if type(arg1) == list and type(arg2) == list:
+                if K == QQ:
+                    D = ZZ.ideal_monoid().prod(arg1).gen()
+                    a, b = hilbert_conductor_inverse(D)
+                    a = Rational(a)
+                    b = Rational(b)
+                else:
+                    if len(arg2) != len(K.real_places()):
+                        raise ValueError("must specify ramification at the real places of %s" % K)
+                    K_pari = pari(K)
+                    fin_places_pari = [I.pari_prime() for I in arg1]
+                    A = K_pari.alginit([2, [fin_places_pari, [QQ(1/2)] * len(fin_places_pari)], arg2])
+                    L_pari = A.algsplittingfield()
+                    a = K(L_pari.disc()[1])
+                    b_pari = A.algb()
+                    b = K(b_pari)
+            else:
+                # QuaternionAlgebra(K, a, b)
+                a = K(arg1)
+                b = K(arg2)
 
         if not K(2).is_unit():
             raise ValueError("2 is not invertible in %s" % K)
